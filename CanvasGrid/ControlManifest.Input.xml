@@ -37,11 +37,7 @@
     <!-- UNCOMMENT TO ADD PROPERTY-SET NODE
       <property-set name="samplePropertySet" display-name-key="Property_Display_Key" description-key="Property_Desc_Key" of-type="SingleLine.Text" usage="bound" required="true" />
     -->
-    <property name="PageSize"
-      display-name-key="PageSize_Disp"
-      description-key="PageSize_Desc"
-      of-type="Whole.None"
-      usage="input"/>
+
     <property name="FilteredRecordCount"
       display-name-key="FilteredRecordCount_Disp"
       description-key="FilteredRecordCount_Desc"

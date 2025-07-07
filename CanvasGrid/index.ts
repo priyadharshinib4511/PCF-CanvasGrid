@@ -1,6 +1,6 @@
 import { initializeIcons } from "@fluentui/react/lib/Icons";
 import * as React from "react";
-import { render, unmountComponentAtNode } from "react-dom";
+import { createRoot, Root } from 'react-dom/client';
 import { IInputs, IOutputs } from "./generated/ManifestTypes";
 import { Grid } from "./Grid";
 import { IColumn } from "@fluentui/react";
@@ -19,6 +19,7 @@ export class CanvasGrid implements ComponentFramework.StandardControl<IInputs, I
 	currentPage = 1;
 	filteredRecordCount?: number;
 	isFullScreen = false;
+	  private root : Root;
 	defaultPageSize = 1; // Default page size, can be adjusted based on requirements
 	
 
@@ -44,14 +45,27 @@ export class CanvasGrid implements ComponentFramework.StandardControl<IInputs, I
 		this.context.parameters.records.refresh();
 	};
 
-	onFilter = (name: string, filter: boolean): void => {
+	onFilter = (name: string, condition: "contains" | "equals" | null, values?: string[]): void => {
 		const filtering = this.context.parameters.records.filtering;
-		if (filter) {
+		if (condition) {
+			let conditionOperator: number;
+			switch (condition) {
+				case "contains":
+					conditionOperator = 8; // Contains
+					break;
+				case "equals":
+					conditionOperator = 0; // Equals
+					break;
+				default:
+					conditionOperator = 0;
+			}
 			filtering.setFilter({
+				filterOperator: 0, // 0 = And, 1 = Or (choose as appropriate)
 				conditions: [
 					{
 						attributeName: name,
-						conditionOperator: 12, // Does not contain Data
+						conditionOperator: conditionOperator,
+						value: values && values.length === 1 ? values[0] : values || []
 					},
 				],
 			} as ComponentFramework.PropertyHelper.DataSetApi.FilterExpression);
@@ -123,6 +137,7 @@ export class CanvasGrid implements ComponentFramework.StandardControl<IInputs, I
 		this.context = context;
 		this.context.mode.trackContainerResize(true);
 		this.resources = this.context.resources;
+		this.root = createRoot( this.container!);
 		this.isTestHarness = document.getElementById("control-dimensions") !== null;
 	}
 
@@ -131,64 +146,65 @@ export class CanvasGrid implements ComponentFramework.StandardControl<IInputs, I
 	 * @param context The entire property bag available to control via Context Object; It contains values as set up by the customizer mapped to names defined in the manifest, as well as utility functions
 	 */
 	public updateView(context: ComponentFramework.Context<IInputs>): void {
-		const dataset = context.parameters.records;
-		const paging = context.parameters.records.paging;
-		const datasetChanged = context.updatedProperties.includes("dataset");
-		const resetPaging = datasetChanged && !dataset.loading && !dataset.paging.hasPreviousPage && this.currentPage !== 1;
+	const dataset = context.parameters.records;
+	const datasetChanged = context.updatedProperties.includes("dataset");
+	const resetPaging = datasetChanged && !dataset.loading && !dataset.paging.hasPreviousPage && this.currentPage !== 1;
 
-		if (context.updatedProperties.includes("fullscreen_close")) {
-			this.isFullScreen = false;
-		}
-		if (context.updatedProperties.includes("fullscreen_open")) {
-			this.isFullScreen = true;
-		}
-
-		if (resetPaging) {
-			this.currentPage = 1;
-		}
-		if (resetPaging || datasetChanged || this.isTestHarness || !this.records) {
-			this.records = dataset.records;
-			this.sortedRecordsIds = dataset.sortedRecordIds;
-		}
-
-		// The test harness provides width/height as strings
-		const allocatedWidth = parseInt(context.mode.allocatedWidth as unknown as string);
-		const allocatedHeight = parseInt(context.mode.allocatedHeight as unknown as string);
-
-		if (this.filteredRecordCount !== this.sortedRecordsIds.length) {
-			this.filteredRecordCount = this.sortedRecordsIds.length;
-			this.notifyOutputChanged();
-		}
-
-		render(
-			React.createElement(Grid, {
-				width: allocatedWidth,
-				height: allocatedHeight,
-				columns: dataset.columns,
-				records: this.records,
-				sortedRecordIds: this.sortedRecordsIds,
-				hasNextPage: paging.hasNextPage,
-				hasPreviousPage: paging.hasPreviousPage,
-				currentPage: this.currentPage,
-				sorting: dataset.sorting,
-				filtering: dataset.filtering?.getFilter(),
-				resources: this.resources,
-				itemsLoading: dataset.loading,
-				highlightValue: this.context.parameters.HighlightValue.raw,
-				highlightColor: this.context.parameters.HighlightColor.raw,
-				setSelectedRecords: this.setSelectedRecords,
-				onNavigate: this.onNavigate,
-				onSort: this.onSort,
-				onFilter: this.onFilter, // Corrected from laodingLastPage to laodLastPag
-				isFullScreen: this.isFullScreen,
-				onFullScreen: this.onFullScreen,
-				onHideColumn: this.onHideColumn,
-				onPageSizeChange: this.onPageSizeChange,
-				defaultPageSize: this.defaultPageSize,
-			}),
-			this.container
-		);
+	if (context.updatedProperties.includes("fullscreen_close")) {
+		this.isFullScreen = false;
 	}
+	if (context.updatedProperties.includes("fullscreen_open")) {
+		this.isFullScreen = true;
+	}
+
+	if (resetPaging) {
+		this.currentPage = 1;
+	}
+
+	if (resetPaging || datasetChanged || this.isTestHarness || !this.records) {
+		this.records = dataset.records;
+		this.sortedRecordsIds = dataset.sortedRecordIds;
+	}
+
+	const allocatedWidth = parseInt(context.mode.allocatedWidth as unknown as string);
+	const allocatedHeight = parseInt(context.mode.allocatedHeight as unknown as string);
+
+	if (this.filteredRecordCount !== this.sortedRecordsIds.length) {
+		this.filteredRecordCount = this.sortedRecordsIds.length;
+		this.notifyOutputChanged();
+	}
+
+	// Render the updated grid
+	this.root.render(
+		React.createElement(Grid, {
+			width: allocatedWidth,
+			height: allocatedHeight,
+			columns: dataset.columns,
+			records: this.records,
+			sortedRecordIds: this.sortedRecordsIds,
+			sorting: dataset.sorting,
+			filtering: dataset.filtering?.getFilter() ?? undefined,
+			resources: this.resources,
+			highlightValue: this.context.parameters.HighlightValue.raw,
+			highlightColor: this.context.parameters.HighlightColor.raw,
+			
+			onSort: this.onSort,
+			onFilter: this.onFilter,
+			onNavigate: this.onNavigate,
+			itemsLoading: dataset.loading,
+			setSelectedRecords: this.setSelectedRecords,
+			onHideColumn: this.onHideColumn,
+			onPageSizeChange: this.onPageSizeChange,
+			defaultPageSize: this.defaultPageSize ?? 10,
+			hasNextPage: dataset.paging.hasNextPage,
+			hasPreviousPage: dataset.paging.hasPreviousPage,
+			currentPage: this.currentPage ?? 1,
+			isFullScreen: this.isFullScreen,
+			onFullScreen: this.onFullScreen,
+		})
+	);
+}
+
 
 	/**
 	 * It is called by the framework prior to a control receiving new data.
@@ -205,6 +221,6 @@ export class CanvasGrid implements ComponentFramework.StandardControl<IInputs, I
 	 * i.e. cancelling any pending remote calls, removing listeners, etc.
 	 */
 	public destroy(): void {
-		unmountComponentAtNode(this.container);
+		 this.root.unmount();
 	}
 }
