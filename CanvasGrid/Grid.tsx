@@ -2,357 +2,425 @@ import { useConst, useForceUpdate } from "@fluentui/react-hooks";
 import * as React from "react";
 import { IObjectWithKey, IRenderFunction, SelectionMode } from "@fluentui/react/lib/Utilities";
 import {
-	ConstrainMode,
-	DetailsList,
-	DetailsListLayoutMode,
-	DetailsRow,
-	IColumn,
-	IDetailsHeaderProps,
-	IDetailsListProps,
-	IDetailsRowStyles,
+  ConstrainMode,
+  DetailsList,
+  DetailsListLayoutMode,
+  DetailsRow,
+  IColumn,
+  IDetailsHeaderProps,
+  IDetailsListProps,
+  IDetailsRowStyles,
 } from "@fluentui/react/lib/DetailsList";
 import { Sticky, StickyPositionType } from "@fluentui/react/lib/Sticky";
 import { ContextualMenu, DirectionalHint, IContextualMenuProps } from "@fluentui/react/lib/ContextualMenu";
 import { ScrollablePane, ScrollbarVisibility } from "@fluentui/react/lib/ScrollablePane";
 import { Stack } from "@fluentui/react/lib/Stack";
 import { Overlay } from "@fluentui/react/lib/Overlay";
-import { DefaultButton, IconButton } from "@fluentui/react/lib/Button";
+import { IconButton, DefaultButton } from "@fluentui/react/lib/Button";
 import { Selection } from "@fluentui/react/lib/Selection";
-import { Link } from "@fluentui/react/lib/Link";
-import { on } from "events";
-import { Dropdown } from "@fluentui/react";
+import { ComboBox } from "@fluentui/react";
 
 type DataSet = ComponentFramework.PropertyHelper.DataSetApi.EntityRecord & IObjectWithKey;
 
-
 export interface GridProps {
-	width?: number;
-	height?: number;
-	columns: ComponentFramework.PropertyHelper.DataSetApi.Column[];
-	records: Record<string, ComponentFramework.PropertyHelper.DataSetApi.EntityRecord>;
-	sortedRecordIds: string[];
-	hasNextPage: boolean;
-	hasPreviousPage: boolean;
-	currentPage: number;
-	sorting: ComponentFramework.PropertyHelper.DataSetApi.SortStatus[];
-	filtering: ComponentFramework.PropertyHelper.DataSetApi.FilterExpression;
-	resources: ComponentFramework.Resources;
-	itemsLoading: boolean;
-	highlightValue: string | null;
-	highlightColor: string | null;
-	setSelectedRecords: (ids: string[]) => void;
-	onNavigate: (item?: ComponentFramework.PropertyHelper.DataSetApi.EntityRecord) => void;
-	onSort: (name: string, desc: boolean) => void;
-	onFilter: (name: string, filtered: boolean) => void;
-	onFullScreen: () => void;
-	isFullScreen: boolean;
-	item?: DataSet;
-	onHideColumn: (name: string) => void;
-	onPageSizeChange: (newPageSize: number) => void;
-	defaultPageSize: number;
+  width?: number;
+  height?: number;
+  columns: ComponentFramework.PropertyHelper.DataSetApi.Column[];
+  records: Record<string, ComponentFramework.PropertyHelper.DataSetApi.EntityRecord>;
+  sortedRecordIds: string[];
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
+  currentPage: number;
+  sorting: ComponentFramework.PropertyHelper.DataSetApi.SortStatus[];
+  filtering: ComponentFramework.PropertyHelper.DataSetApi.FilterExpression;
+  resources: ComponentFramework.Resources;
+  itemsLoading: boolean;
+  highlightValue: string | null;
+  highlightColor: string | null;
+  setSelectedRecords: (ids: string[]) => void;
+  onNavigate: (item?: ComponentFramework.PropertyHelper.DataSetApi.EntityRecord) => void;
+  onSort: (name: string, desc: boolean) => void;
+  onFilter: (name: string, condition: "contains" | "equals" | null, values?: string[]) => void;
+  onFullScreen: () => void;
+  isFullScreen: boolean;
+  item?: DataSet;
+  onHideColumn: (name: string) => void;
+  onPageSizeChange: (newPageSize: number) => void;
+  defaultPageSize: number;
 }
 
+const getUniqueColumnValues = (records: Record<string, any>, columnKey: string): string[] => {
+  return Array.from(new Set(Object.values(records).map((r) => r?.getFormattedValue(columnKey)).filter(Boolean)));
+};
+
 const onRenderDetailsHeader: IRenderFunction<IDetailsHeaderProps> = (props, defaultRender) => {
-	if (props && defaultRender) {
-		return (
-			<Sticky stickyPosition={StickyPositionType.Header} isScrollSynced>
-				{defaultRender({
-					...props,
-				})}
-			</Sticky>
-		);
-	}
-	return null;
+  if (props && defaultRender) {
+    return <Sticky stickyPosition={StickyPositionType.Header} isScrollSynced>{defaultRender({ ...props })}</Sticky>;
+  }
+  return null;
 };
 
 const onRenderItemColumn = (
-	item?: ComponentFramework.PropertyHelper.DataSetApi.EntityRecord,
-	index?: number,
-	column?: IColumn
+  item?: ComponentFramework.PropertyHelper.DataSetApi.EntityRecord,
+  index?: number,
+  column?: IColumn
 ) => {
-	if (column?.fieldName && item) {
-		return <>{item?.getFormattedValue(column.fieldName)}</>;
-	}
-	return <></>;
+  if (column?.fieldName && item) {
+    return <>{item?.getFormattedValue(column.fieldName)}</>;
+  }
+  return <></>;
 };
 
 export const Grid = React.memo((props: GridProps) => {
-	const {
-		records,
-		sortedRecordIds,
-		columns,
-		width,
-		height,
-		hasNextPage,
-		sorting,
-		filtering,
-		// currentPage,
-		itemsLoading,
-		setSelectedRecords,
-		onNavigate,
-		onSort,
-		onFilter,
-		resources,
-		highlightValue,
-		highlightColor,
-		onHideColumn	} = props;
+  const {
+    records,
+    sortedRecordIds,
+    columns,
+    width,
+    height,
+    sorting,
+    filtering,
+    itemsLoading,
+    setSelectedRecords,
+    onNavigate,
+    onSort,
+    onFilter,
+    resources,
+    highlightValue,
+    highlightColor,
+    onHideColumn,
+  } = props;
 
-	const forceUpdate = useForceUpdate();
-	const onSelectionChanged = React.useCallback(() => {
-		const items = selection.getItems() as DataSet[];
-		const selected = selection.getSelectedIndices().map((index: number) => {
-			const item: DataSet | undefined = items[index];
-			return item && items[index].getRecordId();
-		});
+  const forceUpdate = useForceUpdate();
+  const selection: Selection = useConst(() =>
+    new Selection({
+      selectionMode: SelectionMode.single,
+      onSelectionChanged: () => {
+        const items = selection.getItems() as DataSet[];
+        const selected = selection.getSelectedIndices().map((i) => items[i]?.getRecordId());
+        setSelectedRecords(selected);
+        forceUpdate();
+      },
+    })
+  );
 
-		setSelectedRecords(selected);
-		forceUpdate();
-	}, [forceUpdate]);
+  const [contextualMenuProps, setContextualMenuProps] = React.useState<IContextualMenuProps>();
+  const [currentPage, setCurrentPage] = React.useState(1);
+  const [pageSize, setPageSize] = React.useState<number>(10);
+  const [isComponentLoading, setIsLoading] = React.useState(false);
+  const [containsFilters, setContainsFilters] = React.useState<Record<string, string[]>>({});
+  const [equalsFilters, setEqualsFilters] = React.useState<Record<string, string[]>>({});
 
-	const selection: Selection = useConst(() => {
-		return new Selection({
-			selectionMode: SelectionMode.single,
-			onSelectionChanged: onSelectionChanged,
-		});
-	});
+  const onContextualMenuDismissed = () => setContextualMenuProps(undefined);
 
-	const [isComponentLoading, setIsLoading] = React.useState<boolean>(false);
+  const getContextualMenuProps = React.useCallback((column: IColumn, ev: React.MouseEvent<HTMLElement>): IContextualMenuProps => {
+    const colKey = column.key;
+    const uniqueValues = getUniqueColumnValues(records, colKey).sort();
 
-	const [contextualMenuProps, setContextualMenuProps] = React.useState<IContextualMenuProps>();
+    return {
+      items: [
+        {
+          key: "aToZ",
+          name: resources.getString("Label_SortAZ"),
+          iconProps: { iconName: "SortUp" },
+          onClick: () => {
+            onSort(colKey, false);
+            setContextualMenuProps(undefined);
+          },
+        },
+        {
+          key: "zToA",
+          name: resources.getString("Label_SortZA"),
+          iconProps: { iconName: "SortDown" },
+          onClick: () => {
+            onSort(colKey, true);
+            setContextualMenuProps(undefined);
+          },
+        },
+      {
+        key: "filterContains",
+        name: "Filter by Contains",
+        iconProps: { iconName: "Filter" },
+        subMenuProps: {
+          items: [
+            {
+              key: "containsDropdown",
+              name: "Contains",
+              onRender: () => {
+                const selected = containsFilters[colKey] || [];
+                const allSelected = uniqueValues.length > 0 && selected.length === uniqueValues.length;
 
-	const [currentPage, setCurrentPage] = React.useState(1);
-	const [pageSize, setPageSize] = React.useState<number>(10);
+                const options = [
+                  {
+                    key: "__selectAll__",
+                    text: allSelected ? "Unselect All" : "Select All",
+                    selected: allSelected,
+                  },
+                  ...uniqueValues.map((v) => ({
+                    key: v,
+                    text: v,
+                    selected: selected.includes(v),
+                  })),
+                ];
 
-	const onContextualMenuDismissed = React.useCallback(() => {
-		setContextualMenuProps(undefined);
-	}, [setContextualMenuProps]);
+                return (
+                  <div style={{ padding: 10, width: 260 }} onMouseDown={e => e.stopPropagation()}>
+                    <ComboBox
+                      label={`Filter "${column.name}" contains`}
+                      multiSelect
+                      selectedKey={undefined}
+                      options={options}
+                      onChange={(_, option) => {
+                        if (!option) return;
+                        setContainsFilters(prev => {
+                          const current = prev[colKey] || [];
 
-	const getContextualMenuProps = React.useCallback(
-		(column: IColumn, ev: React.MouseEvent<HTMLElement>): IContextualMenuProps => {
-			const menuItems = [
-				{
-					key: "aToZ",
-					name: resources.getString("Label_SortAZ"),
-					iconProps: { iconName: "SortUp" },
-					canCheck: true,
-					checked: column.isSorted && !column.isSortedDescending,
-					disable: (column.data as ComponentFramework.PropertyHelper.DataSetApi.Column).disableSorting,
-					onClick: () => {
-						onSort(column.key, false);
-						setContextualMenuProps(undefined);
-						setIsLoading(true);
-					},
-				},
-				{
-					key: "zToA",
-					name: resources.getString("Label_SortZA"),
-					iconProps: { iconName: "SortDown" },
-					canCheck: true,
-					checked: column.isSorted && column.isSortedDescending,
-					disable: (column.data as ComponentFramework.PropertyHelper.DataSetApi.Column).disableSorting,
-					onClick: () => {
-						onSort(column.key, true);
-						setContextualMenuProps(undefined);
-						setIsLoading(true);
-					},
-				},
-				{
-					key: "filter",
-					name: resources.getString("Label_DoesNotContainData"),
-					iconProps: { iconName: "Filter" },
-					canCheck: true,
-					checked: column.isFiltered,
-					onClick: () => {
-						onFilter(column.key, column.isFiltered !== true);
-						setContextualMenuProps(undefined);
-						setIsLoading(true);
-					},
-				},
-				{
-					key: "hideColumn",
-					name: resources.getString("Label_HideColumn"),
-					iconProps: { iconName: "eye" },
-					canCheck: false,
-					onClick: () => {
-						onHideColumn(column.key);
-						setContextualMenuProps(undefined);
-						setIsLoading(true);
-					},
-				},
-			];
-			return {
-				items: menuItems,
-				target: ev.currentTarget as HTMLElement,
-				directionalHint: DirectionalHint.bottomLeftEdge,
-				gapSpace: 10,
-				isBeakVisible: true,
-				onDismiss: onContextualMenuDismissed,
-			};
-		},
-		[setIsLoading, onFilter, setContextualMenuProps, onHideColumn]
-	);
+                          let updated: string[] = [];
 
-	const onColumnContextMenu = React.useCallback(
-		(column?: IColumn, ev?: React.MouseEvent<HTMLElement>) => {
-			if (column && ev) {
-				setContextualMenuProps(getContextualMenuProps(column, ev));
-			}
-		},
-		[getContextualMenuProps, setContextualMenuProps]
-	);
+                          if (option.key === "__selectAll__") {
+                            updated = selected.length === uniqueValues.length ? [] : [...uniqueValues];
+                            setContextualMenuProps(undefined);
+                          } else {
+                            updated = option.selected
+                              ? [...current, option.key as string]
+                              : current.filter((k) => k !== option.key);
+                          }
 
-	const onColumnClick = React.useCallback(
-		(ev: React.MouseEvent<HTMLElement>, column: IColumn) => {
-			if (column && ev) {
-				setContextualMenuProps(getContextualMenuProps(column, ev));
-			}
-		},
-		[getContextualMenuProps, setContextualMenuProps]
-	);
+                          onFilter(colKey, "contains", updated);
+                          return { ...prev, [colKey]: updated };
+                        });
+                      }}
+                    />
+                    <DefaultButton
+                      text="Clear"
+                      onClick={() => {
+                        setContainsFilters(prev => {
+                          const next = { ...prev };
+                          delete next[colKey];
+                          onFilter(colKey, null, []);
+                          return next;
+                        });
+                        setContextualMenuProps(undefined);
+                      }}
+                      styles={{ root: { marginTop: 8 } }}
+                    />
+                  </div>
+                );
+              },
+            },
+          ],
+        },
+      },
+      {
+        key: "filterEquals",
+        name: "Filter by Equals",
+        iconProps: { iconName: "Equals" },
+        subMenuProps: {
+          items: [
+            {
+              key: "equalsDropdown",
+              name: "Equals",
+              onRender: () => {
+                const selected = equalsFilters[colKey] || [];
+                const allSelected = uniqueValues.length > 0 && selected.length === uniqueValues.length;
 
-	const items: (DataSet | undefined)[] = React.useMemo(() => {
-		setIsLoading(false);
+                const options = [
+                  {
+                    key: "__selectAll__",
+                    text: allSelected ? "Unselect All" : "Select All",
+                    selected: allSelected,
+                  },
+                  ...uniqueValues.map((v) => ({
+                    key: v,
+                    text: v,
+                    selected: selected.includes(v),
+                  })),
+                ];
 
-		const sortedRecords: (DataSet | undefined)[] = sortedRecordIds.map((id) => {
-			const record = records[id];
-			return record;
-		});
+                return (
+                  <div style={{ padding: 10, width: 260 }} onMouseDown={e => e.stopPropagation()}>
+                    <ComboBox
+                      label={`Filter "${column.name}" equals`}
+                      multiSelect
+                      selectedKey={undefined}
+                      options={options}
+                      onChange={(_, option) => {
+                        if (!option) return;
+                        setEqualsFilters(prev => {
+                          const current = prev[colKey] || [];
 
-		return sortedRecords;
-	}, [records, sortedRecordIds, hasNextPage, setIsLoading]);
+                          let updated: string[] = [];
 
-	const totalPages = Math.ceil(items.length / pageSize);
+                          if (option.key === "__selectAll__") {
+                            updated = selected.length === uniqueValues.length ? [] : [...uniqueValues];
+                            setContextualMenuProps(undefined);
+                          } else {
+                            updated = option.selected
+                              ? [...current, option.key as string]
+                              : current.filter((k) => k !== option.key);
+                          }
 
-	React.useEffect(() => {
-		if (currentPage > totalPages) {
-			setCurrentPage(totalPages);
-		}
-	}, [items, totalPages, pageSize]);
+                          onFilter(colKey, "equals", updated);
+                          return { ...prev, [colKey]: updated };
+                        });
+                      }}
+                    />
+                    <DefaultButton
+                      text="Clear"
+                      onClick={() => {
+                        setEqualsFilters(prev => {
+                          const next = { ...prev };
+                          delete next[colKey];
+                          onFilter(colKey, null, []);
+                          return next;
+                        });
+                        setContextualMenuProps(undefined);
+                      }}
+                      styles={{ root: { marginTop: 8 } }}
+                    />
+                  </div>
+                );
+              },
+            },
+          ],
+        },
+      },
+        {
+          key: "hideColumn",
+          name: resources.getString("Label_HideColumn"),
+          iconProps: { iconName: "Hide" },
+          onClick: () => {
+            onHideColumn(colKey);
+            setContextualMenuProps(undefined);
+          },
+        },
+      ],
+      target: ev.currentTarget as HTMLElement,
+      directionalHint: DirectionalHint.bottomLeftEdge,
+      isBeakVisible: true,
+      onDismiss: onContextualMenuDismissed,
+    };
+  }, [containsFilters, equalsFilters]);
 
-	const pagedItems = React.useMemo(() => {
-		return items.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-	}, [items, currentPage, pageSize]);
+  const onColumnContextMenu = React.useCallback((column?: IColumn, ev?: React.MouseEvent<HTMLElement>) => {
+    if (column && ev) setContextualMenuProps(getContextualMenuProps(column, ev));
+  }, [getContextualMenuProps]);
 
+  const onColumnClick = React.useCallback((ev: React.MouseEvent<HTMLElement>, column: IColumn) => {
+    if (column && ev) setContextualMenuProps(getContextualMenuProps(column, ev));
+  }, [getContextualMenuProps]);
 
+  const items = React.useMemo(() => {
+    setIsLoading(false);
+    return sortedRecordIds.map((id) => records[id]).filter(Boolean);
+  }, [sortedRecordIds, records]);
 
+  const filteredItems = React.useMemo(() => {
+    console.log("Filtering with:", { containsFilters, equalsFilters });
+    return items.filter(item => {
+      const containsMatch = Object.entries(containsFilters).every(([col, vals]) => {
+        if (vals.length === 0) return true;
+        const itemValue = item.getFormattedValue(col)?.toLowerCase() || "";
+        const matches = vals.some(val => itemValue.includes(val.toLowerCase()));
+        console.log(`Contains filter for ${col}: item="${itemValue}", filters=[${vals.join(',')}], matches=${matches}`);
+        return matches;
+      });
+      
+      const equalsMatch = Object.entries(equalsFilters).every(([col, vals]) => {
+        if (vals.length === 0) return true;
+        const itemValue = item.getFormattedValue(col) || "";
+        const matches = vals.some(val => itemValue === val);
+        console.log(`Equals filter for ${col}: item="${itemValue}", filters=[${vals.join(',')}], matches=${matches}`);
+        return matches;
+      });
+      
+      return containsMatch && equalsMatch;
+    });
+  }, [items, containsFilters, equalsFilters]);
 
+  const totalPages = Math.ceil(filteredItems.length / pageSize);
 
+  React.useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages || 1);
+  }, [filteredItems, totalPages]);
 
-	const gridColumns = React.useMemo(() => {
-		return columns
-			.filter((col) => !col.isHidden && col.order >= 0)
-			.sort((a, b) => a.order - b.order)
-			.map((col) => {
-				const sortOn = sorting?.find((s) => s.name === col.name);
-				const filtered = filtering?.conditions?.find((f) => f.attributeName == col.name);
-				return {
-					key: col.name,
-					name: col.displayName,
-					fieldName: col.name,
-					isSorted: sortOn != null,
-					isSortedDescending: sortOn?.sortDirection === 1,
-					isResizable: true,
-					isFiltered: filtered != null,
-					data: col,
-					onColumnContextMenu: onColumnContextMenu,
-					onColumnClick: onColumnClick,
-				} as IColumn;
-			});
-	}, [columns, sorting, onColumnContextMenu, onColumnClick, filtering?.conditions]);
+  const pagedItems = React.useMemo(() => {
+    return filteredItems.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  }, [filteredItems, currentPage, pageSize]);
 
-	const rootContainerStyle: React.CSSProperties = React.useMemo(() => {
-		return {
-			height: height,
-			width: width,
-		};
-	}, [width, height]);
+  const gridColumns = React.useMemo(() => {
+    return columns
+      .filter((col) => !col.isHidden && col.order >= 0)
+      .sort((a, b) => a.order - b.order)
+      .map((col) => {
+        const sortOn = sorting?.find((s) => s.name === col.name);
+        const isFiltered = containsFilters[col.name]?.length > 0 || equalsFilters[col.name]?.length > 0;
+        return {
+          key: col.name,
+          name: col.displayName,
+          fieldName: col.name,
+          isSorted: !!sortOn,
+          isSortedDescending: sortOn?.sortDirection === 1,
+          isFiltered,
+          isResizable: true,
+          data: col,
+          onColumnContextMenu,
+          onColumnClick,
+        } as IColumn;
+      });
+  }, [columns, sorting, containsFilters, equalsFilters]);
 
-	const onRenderRow: IDetailsListProps["onRenderRow"] = (props) => {
-		const customStyles: Partial<IDetailsRowStyles> = {};
+  const onRenderRow: IDetailsListProps["onRenderRow"] = (props) => {
+    if (!props) return null;
+    const item = props.item as DataSet;
+    const customStyles: Partial<IDetailsRowStyles> = {};
+    if (highlightColor && highlightValue && item.getValue("HighlightIndicator") == highlightValue) {
+      customStyles.root = { backgroundColor: highlightColor };
+    }
+    return <DetailsRow {...props} styles={customStyles} />;
+  };
 
-		if (props?.item) {
-			const item = props.item as DataSet;
-
-			if (highlightColor && highlightValue && item.getValue("HighlightIndicator") == highlightValue) {
-				customStyles.root = { backgroundColor: highlightColor };
-			}
-			return <DetailsRow {...props} styles={customStyles} />;
-		}
-
-		return null;
-	};
-
-
-	const pageSizeOptions = [10, 25, 50, 100];
-
-
-	return (
-		<Stack verticalFill grow style={rootContainerStyle}>
-			<Stack.Item grow style={{ position: "relative", backgroundColor: "white" }}>
-				<ScrollablePane scrollbarVisibility={ScrollbarVisibility.auto}>
-					<DetailsList
-						columns={gridColumns}
-						onRenderItemColumn={onRenderItemColumn}
-						onRenderDetailsHeader={onRenderDetailsHeader}
-						items={pagedItems}
-						setKey={`set${currentPage}`}
-						initialFocusedIndex={0}
-						checkButtonAriaLabel="select row"
-						layoutMode={DetailsListLayoutMode.fixedColumns}
-						constrainMode={ConstrainMode.unconstrained}
-						selection={selection}
-						onItemInvoked={onNavigate}
-						onRenderRow={onRenderRow}></DetailsList>
-					{contextualMenuProps && <ContextualMenu {...contextualMenuProps} />}
-				</ScrollablePane>
-				{(itemsLoading || isComponentLoading) && <Overlay />}
-			</Stack.Item>
-			<Stack.Item>
-				<Stack
-					horizontal
-					horizontalAlign="end"
-					tokens={{ childrenGap: 10 }}
-					style={{ marginTop: 10 }}
-				>
-					{/* Page size label and dropdown FIRST */}
-					<span >Rows per page</span>
-					<Dropdown
-						options={pageSizeOptions.map(n => ({ key: n, text: n.toString() }))}
-						selectedKey={pageSize}
-						onChange={(_, option) => {
-							setPageSize(Number(option!.key));
-							setCurrentPage(1);
-						}}
-						styles={{ dropdown: { width: 80 } }}
-					/>
-					<IconButton
-						iconProps={{ iconName: 'Rewind' }}
-						text="First"
-						onClick={() => setCurrentPage(1)}
-						disabled={currentPage === 1}
-					/>
-					<IconButton
-						iconProps={{ iconName: 'Previous' }}
-						onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-						disabled={currentPage === 1}
-					/>
-					<span style={{ paddingTop: 5 }}>
-						Page {currentPage} of {totalPages}
-					</span>
-					<IconButton
-						iconProps={{ iconName: 'Next' }}
-						onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-						disabled={currentPage === totalPages}
-					/>
-					<IconButton
-						iconProps={{ iconName: 'FastForward' }}
-						onClick={() => setCurrentPage(totalPages)}
-						disabled={currentPage === totalPages}
-					/>
-				</Stack>
-			</Stack.Item>
-		</Stack>
-	);
+  return (
+    <Stack verticalFill grow style={{ width, height }}>
+      <Stack.Item grow style={{ position: "relative", backgroundColor: "white" }}>
+        <ScrollablePane scrollbarVisibility={ScrollbarVisibility.auto}>
+          <DetailsList
+            columns={gridColumns}
+            onRenderItemColumn={onRenderItemColumn}
+            onRenderDetailsHeader={onRenderDetailsHeader}
+            items={pagedItems}
+            setKey={`set${currentPage}`}
+            layoutMode={DetailsListLayoutMode.fixedColumns}
+            constrainMode={ConstrainMode.unconstrained}
+            selection={selection}
+            onItemInvoked={onNavigate}
+            onRenderRow={onRenderRow}
+          />
+          {contextualMenuProps && <ContextualMenu {...contextualMenuProps} />}
+        </ScrollablePane>
+        {(itemsLoading || isComponentLoading) && <Overlay />}
+      </Stack.Item>
+      <Stack.Item>
+        <Stack horizontal horizontalAlign="end" tokens={{ childrenGap: 10 }} style={{ marginTop: 10 }}>
+          <span>Rows per page</span>
+          <ComboBox
+            options={[10, 25, 50, 100].map(n => ({ key: n, text: n.toString() }))}
+            selectedKey={pageSize}
+            onChange={(_, option) => {
+              setPageSize(Number(option!.key));
+              setCurrentPage(1);
+            }}
+            styles={{ root: { width: 80 } }}
+          />
+          <IconButton iconProps={{ iconName: 'Rewind' }} onClick={() => setCurrentPage(1)} disabled={currentPage === 1} />
+          <IconButton iconProps={{ iconName: 'Previous' }} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} />
+          <span style={{ paddingTop: 5 }}>Page {currentPage} of {totalPages}</span>
+          <IconButton iconProps={{ iconName: 'Next' }} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages} />
+          <IconButton iconProps={{ iconName: 'FastForward' }} onClick={() => setCurrentPage(totalPages)} disabled={currentPage === totalPages} />
+        </Stack>
+      </Stack.Item>
+    </Stack>
+  );
 });
 
 Grid.displayName = "Grid";
