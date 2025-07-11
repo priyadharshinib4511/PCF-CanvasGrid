@@ -16,9 +16,9 @@ import { ContextualMenu, DirectionalHint, IContextualMenuProps } from "@fluentui
 import { ScrollablePane, ScrollbarVisibility } from "@fluentui/react/lib/ScrollablePane";
 import { Stack } from "@fluentui/react/lib/Stack";
 import { Overlay } from "@fluentui/react/lib/Overlay";
-import { IconButton, DefaultButton } from "@fluentui/react/lib/Button";
+import { IconButton, DefaultButton, PrimaryButton } from "@fluentui/react/lib/Button";
 import { Selection } from "@fluentui/react/lib/Selection";
-import { ComboBox } from "@fluentui/react";
+import { ComboBox, Link } from "@fluentui/react";
 
 type DataSet = ComponentFramework.PropertyHelper.DataSetApi.EntityRecord & IObjectWithKey;
 
@@ -47,6 +47,7 @@ export interface GridProps {
   onHideColumn: (name: string) => void;
   onPageSizeChange: (newPageSize: number) => void;
   defaultPageSize: number;
+  onResetColumns: () => void;
 }
 
 const getUniqueColumnValues = (records: Record<string, any>, columnKey: string): string[] => {
@@ -89,7 +90,13 @@ export const Grid = React.memo((props: GridProps) => {
     highlightValue,
     highlightColor,
     onHideColumn,
+    onResetColumns,
+    onFullScreen,
+    isFullScreen
   } = props;
+
+  // Local state for hidden columns (by name)
+  const [hiddenColumns, setHiddenColumns] = React.useState<string[]>([]);
 
   const forceUpdate = useForceUpdate();
   const selection: Selection = useConst(() =>
@@ -137,160 +144,136 @@ export const Grid = React.memo((props: GridProps) => {
             setContextualMenuProps(undefined);
           },
         },
-      {
-        key: "filterContains",
-        name: "Filter by Contains",
-        iconProps: { iconName: "Filter" },
-        subMenuProps: {
-          items: [
-            {
-              key: "containsDropdown",
-              name: "Contains",
-              onRender: () => {
-                const selected = containsFilters[colKey] || [];
-                const allSelected = uniqueValues.length > 0 && selected.length === uniqueValues.length;
-
-                const options = [
-                  {
-                    key: "__selectAll__",
-                    text: allSelected ? "Unselect All" : "Select All",
-                    selected: allSelected,
-                  },
-                  ...uniqueValues.map((v) => ({
-                    key: v,
-                    text: v,
-                    selected: selected.includes(v),
-                  })),
-                ];
-
-                return (
-                  <div style={{ padding: 10, width: 260 }} onMouseDown={e => e.stopPropagation()}>
-                    <ComboBox
-                      label={`Filter "${column.name}" contains`}
-                      multiSelect
-                      selectedKey={undefined}
-                      options={options}
-                      onChange={(_, option) => {
-                        if (!option) return;
-                        setContainsFilters(prev => {
-                          const current = prev[colKey] || [];
-
-                          let updated: string[] = [];
-
-                          if (option.key === "__selectAll__") {
-                            updated = selected.length === uniqueValues.length ? [] : [...uniqueValues];
-                            setContextualMenuProps(undefined);
-                          } else {
-                            updated = option.selected
-                              ? [...current, option.key as string]
-                              : current.filter((k) => k !== option.key);
-                          }
-
-                          onFilter(colKey, "contains", updated);
-                          return { ...prev, [colKey]: updated };
-                        });
-                      }}
-                    />
-                    <DefaultButton
-                      text="Clear"
-                      onClick={() => {
-                        setContainsFilters(prev => {
-                          const next = { ...prev };
-                          delete next[colKey];
-                          onFilter(colKey, null, []);
-                          return next;
-                        });
-                        setContextualMenuProps(undefined);
-                      }}
-                      styles={{ root: { marginTop: 8 } }}
-                    />
-                  </div>
-                );
+        {
+          key: "filterContains",
+          name: "Filter by Contains",
+          iconProps: { iconName: "Filter" },
+          subMenuProps: {
+            items: [
+              {
+                key: "containsDropdown",
+                name: "Contains",
+                onRender: () => {
+                  const filterValue = (containsFilters[colKey] && containsFilters[colKey][0]) || "";
+                  return (
+                    <div style={{ padding: 10, width: 260 }}>
+                      <label style={{ display: "block", marginBottom: 6 }}>{`Filter "${column.name}" contains`}</label>
+                      <input
+                        type="text"
+                        // value={containsFilters[colKey]?.[0] || ''}
+                        onChange={(e) => {
+                          e.stopPropagation();
+                          const val = e.target.value;
+                          setContainsFilters(prev => {
+                            const updated = val ? [val] : [];
+                            onFilter(colKey, "contains", updated);
+                            return { ...prev, [colKey]: updated };
+                          });
+                        }}
+                        style={{ width: "90%", marginBottom: 8 }}
+                        placeholder="Type to filter..."
+                      />
+                      <DefaultButton
+                        text="Clear"
+                        onClick={() => {
+                          setContainsFilters(prev => {
+                            const next = { ...prev };
+                            delete next[colKey];
+                            onFilter(colKey, null, []);
+                            return next;
+                          });
+                          setContextualMenuProps(undefined);
+                        }}
+                        styles={{ root: { marginTop: 0 } }}
+                      />
+                    </div>
+                  );
+                },
               },
-            },
-          ],
+            ],
+          },
         },
-      },
-      {
-        key: "filterEquals",
-        name: "Filter by Equals",
-        iconProps: { iconName: "Equals" },
-        subMenuProps: {
-          items: [
-            {
-              key: "equalsDropdown",
-              name: "Equals",
-              onRender: () => {
-                const selected = equalsFilters[colKey] || [];
-                const allSelected = uniqueValues.length > 0 && selected.length === uniqueValues.length;
+        {
+          key: "filterEquals",
+          name: "Filter by Equals",
+          iconProps: { iconName: "Equals" },
+          subMenuProps: {
+            items: [
+              {
+                key: "equalsDropdown",
+                name: "Equals",
+                onRender: () => {
+                  const selected = equalsFilters[colKey] || [];
+                  const allSelected = uniqueValues.length > 0 && selected.length === uniqueValues.length;
 
-                const options = [
-                  {
-                    key: "__selectAll__",
-                    text: allSelected ? "Unselect All" : "Select All",
-                    selected: allSelected,
-                  },
-                  ...uniqueValues.map((v) => ({
-                    key: v,
-                    text: v,
-                    selected: selected.includes(v),
-                  })),
-                ];
+                  const options = [
+                    {
+                      key: "__selectAll__",
+                      text: allSelected ? "Unselect All" : "Select All",
+                      selected: allSelected,
+                    },
+                    ...uniqueValues.map((v) => ({
+                      key: v,
+                      text: v,
+                      selected: selected.includes(v),
+                    })),
+                  ];
 
-                return (
-                  <div style={{ padding: 10, width: 260 }} onMouseDown={e => e.stopPropagation()}>
-                    <ComboBox
-                      label={`Filter "${column.name}" equals`}
-                      multiSelect
-                      selectedKey={undefined}
-                      options={options}
-                      onChange={(_, option) => {
-                        if (!option) return;
-                        setEqualsFilters(prev => {
-                          const current = prev[colKey] || [];
+                  return (
+                    <div style={{ padding: 10, width: 260 }} onMouseDown={e => e.stopPropagation()}>
+                      <ComboBox
+                        label={`Filter "${column.name}" equals`}
+                        multiSelect
+                        selectedKey={undefined}
+                        options={options}
+                        onChange={(_, option) => {
+                          if (!option) return;
+                          setEqualsFilters(prev => {
+                            const current = prev[colKey] || [];
 
-                          let updated: string[] = [];
+                            let updated: string[] = [];
 
-                          if (option.key === "__selectAll__") {
-                            updated = selected.length === uniqueValues.length ? [] : [...uniqueValues];
-                            setContextualMenuProps(undefined);
-                          } else {
-                            updated = option.selected
-                              ? [...current, option.key as string]
-                              : current.filter((k) => k !== option.key);
-                          }
+                            if (option.key === "__selectAll__") {
+                              updated = selected.length === uniqueValues.length ? [] : [...uniqueValues];
+                              setContextualMenuProps(undefined);
+                            } else {
+                              updated = option.selected
+                                ? [...current, option.key as string]
+                                : current.filter((k) => k !== option.key);
+                            }
 
-                          onFilter(colKey, "equals", updated);
-                          return { ...prev, [colKey]: updated };
-                        });
-                      }}
-                    />
-                    <DefaultButton
-                      text="Clear"
-                      onClick={() => {
-                        setEqualsFilters(prev => {
-                          const next = { ...prev };
-                          delete next[colKey];
-                          onFilter(colKey, null, []);
-                          return next;
-                        });
-                        setContextualMenuProps(undefined);
-                      }}
-                      styles={{ root: { marginTop: 8 } }}
-                    />
-                  </div>
-                );
+                            onFilter(colKey, "equals", updated);
+                            return { ...prev, [colKey]: updated };
+                          });
+                        }}
+                      />
+                      <DefaultButton
+                        text="Clear"
+                        onClick={() => {
+                          setEqualsFilters(prev => {
+                            const next = { ...prev };
+                            delete next[colKey];
+                            onFilter(colKey, null, []);
+                            return next;
+                          });
+                          setContextualMenuProps(undefined);
+                        }}
+                        styles={{ root: { marginTop: 8 } }}
+                      />
+                    </div>
+                  );
+                },
               },
-            },
-          ],
+            ],
+          },
         },
-      },
         {
           key: "hideColumn",
           name: resources.getString("Label_HideColumn"),
           iconProps: { iconName: "Hide" },
           onClick: () => {
-            onHideColumn(colKey);
+            setHiddenColumns(prev => [...prev, colKey]);
+            if (onHideColumn) onHideColumn(colKey); // still call for parent notification if needed
             setContextualMenuProps(undefined);
           },
         },
@@ -325,7 +308,7 @@ export const Grid = React.memo((props: GridProps) => {
         console.log(`Contains filter for ${col}: item="${itemValue}", filters=[${vals.join(',')}], matches=${matches}`);
         return matches;
       });
-      
+
       const equalsMatch = Object.entries(equalsFilters).every(([col, vals]) => {
         if (vals.length === 0) return true;
         const itemValue = item.getFormattedValue(col) || "";
@@ -333,7 +316,7 @@ export const Grid = React.memo((props: GridProps) => {
         console.log(`Equals filter for ${col}: item="${itemValue}", filters=[${vals.join(',')}], matches=${matches}`);
         return matches;
       });
-      
+
       return containsMatch && equalsMatch;
     });
   }, [items, containsFilters, equalsFilters]);
@@ -350,7 +333,7 @@ export const Grid = React.memo((props: GridProps) => {
 
   const gridColumns = React.useMemo(() => {
     return columns
-      .filter((col) => !col.isHidden && col.order >= 0)
+      .filter((col) => !col.isHidden && col.order >= 0 && !hiddenColumns.includes(col.name))
       .sort((a, b) => a.order - b.order)
       .map((col) => {
         const sortOn = sorting?.find((s) => s.name === col.name);
@@ -368,7 +351,7 @@ export const Grid = React.memo((props: GridProps) => {
           onColumnClick,
         } as IColumn;
       });
-  }, [columns, sorting, containsFilters, equalsFilters]);
+  }, [columns, sorting, containsFilters, equalsFilters, hiddenColumns]);
 
   const onRenderRow: IDetailsListProps["onRenderRow"] = (props) => {
     if (!props) return null;
@@ -380,8 +363,22 @@ export const Grid = React.memo((props: GridProps) => {
     return <DetailsRow {...props} styles={customStyles} />;
   };
 
+  console.log("Full Screen Mode:", isFullScreen);
+
   return (
     <Stack verticalFill grow style={{ width, height }}>
+      <Stack.Item>
+        <Stack horizontal horizontalAlign="end" verticalAlign="center" style={{ padding: "10px 20px" }}>
+          <Stack horizontal tokens={{ childrenGap: 10 }} verticalAlign="center">
+            {!isFullScreen && <Link onClick={onFullScreen}>{resources.getString("Label_ShowFullScreen")}</Link>}
+            <PrimaryButton
+              text={resources.getString("Label_ResetColumns")}
+              iconProps={{ iconName: "RevToggleKey" }}
+              onClick={onResetColumns}
+            />
+          </Stack>
+        </Stack>
+      </Stack.Item>
       <Stack.Item grow style={{ position: "relative", backgroundColor: "white" }}>
         <ScrollablePane scrollbarVisibility={ScrollbarVisibility.auto}>
           <DetailsList
@@ -403,14 +400,19 @@ export const Grid = React.memo((props: GridProps) => {
       <Stack.Item>
         <Stack horizontal horizontalAlign="end" tokens={{ childrenGap: 10 }} style={{ marginTop: 10 }}>
           <span>Rows per page</span>
-          <ComboBox
-            options={[10, 25, 50, 100].map(n => ({ key: n, text: n.toString() }))}
-            selectedKey={pageSize}
-            onChange={(_, option) => {
-              setPageSize(Number(option!.key));
+          <input
+            type="number"
+            min={1}
+            max={1000}
+            value={pageSize}
+            onChange={e => {
+              let val = Number(e.target.value);
+              if (isNaN(val) || val < 1) val = 1;
+              if (val > 1000) val = 1000;
+              setPageSize(val);
               setCurrentPage(1);
             }}
-            styles={{ root: { width: 80 } }}
+            style={{ width: 80, marginRight: 8 }}
           />
           <IconButton iconProps={{ iconName: 'Rewind' }} onClick={() => setCurrentPage(1)} disabled={currentPage === 1} />
           <IconButton iconProps={{ iconName: 'Previous' }} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={currentPage === 1} />
