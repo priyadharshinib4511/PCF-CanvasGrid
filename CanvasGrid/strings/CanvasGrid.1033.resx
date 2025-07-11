@@ -181,4 +181,8 @@
     <value>Show Full Screen</value>
     <comment/>
   </data>
+  <data name="Label_ResetColumns" xml:space="preserve">
+    <value>Reset Columns</value>
+    <comment/>
+  </data>
 </root>

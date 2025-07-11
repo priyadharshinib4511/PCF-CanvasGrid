@@ -19,9 +19,9 @@ export class CanvasGrid implements ComponentFramework.StandardControl<IInputs, I
 	currentPage = 1;
 	filteredRecordCount?: number;
 	isFullScreen = false;
-	  private root : Root;
+	private root: Root;
 	defaultPageSize = 1; // Default page size, can be adjusted based on requirements
-	
+
 
 	setSelectedRecords = (ids: string[]): void => {
 		this.context.parameters.records.setSelectedRecordIds(ids);
@@ -35,13 +35,22 @@ export class CanvasGrid implements ComponentFramework.StandardControl<IInputs, I
 
 	onSort = (name: string, desc: boolean): void => {
 		const sorting = this.context.parameters.records.sorting;
-		while (sorting.length > 0) {
+		console.log("Sorting by", name, desc, sorting, this.context.parameters.records);
+		while (sorting?.length > 0) {
 			sorting.pop();
 		}
-		this.context.parameters.records.sorting.push({
-			name: name,
-			sortDirection: desc ? 1 : 0,
-		});
+		if (!sorting || sorting?.length === 0) {
+			this.context.parameters.records.sorting = [{
+				name: name,
+				sortDirection: desc ? 1 : 0,
+			}];
+		}
+		else {
+			this.context.parameters.records.sorting.push({
+				name: name,
+				sortDirection: desc ? 1 : 0,
+			});
+		}
 		this.context.parameters.records.refresh();
 	};
 
@@ -98,17 +107,30 @@ export class CanvasGrid implements ComponentFramework.StandardControl<IInputs, I
 
 	onFullScreen = (): void => {
 		this.context.mode.setFullScreen(true);
+		console.log("Entering full screen mode");
+		this.isFullScreen = true;
+		this.notifyOutputChanged();
+		this.context.parameters.records.refresh();
 	};
 
+	/**
+	 * Hides a column by name for the current grid render only (does not mutate global columns array).
+	 * This method should be passed to the Grid and used to update a local hidden columns state.
+	 */
 	onHideColumn = (name: string): void => {
+		// This method is intended to be passed to the Grid, which should manage its own local hidden columns state.
+		// Do not mutate this.context.parameters.records.columns here.
+		// Instead, trigger a re-render or update a local state in the Grid.
+		// Optionally, you can notifyOutputChanged or refresh if needed.
+		this.notifyOutputChanged();
+	}
+
+	onResetColumns = (): void => {
+		console.log("Resetting columns");
 		const columns = this.context.parameters.records.columns;
-		const index = columns.findIndex((col) => col.name === name);
-		if (index !== -1) {
-			console.log(`Removing column: ${name}`, columns[index], columns);
-			columns.splice(index, 1);
-			console.log(`after Removing column: ${name}`, columns);
-			this.context.parameters.records.refresh();
-		}
+		this.context.parameters.records.columns = columns
+		this.context.parameters.records.refresh();
+		console.log("Columns reset", this.context.parameters.records.columns);
 	}
 
 	onPageSizeChange = (newPageSize: number): void => {
@@ -137,7 +159,7 @@ export class CanvasGrid implements ComponentFramework.StandardControl<IInputs, I
 		this.context = context;
 		this.context.mode.trackContainerResize(true);
 		this.resources = this.context.resources;
-		this.root = createRoot( this.container!);
+		this.root = createRoot(this.container);
 		this.isTestHarness = document.getElementById("control-dimensions") !== null;
 	}
 
@@ -146,64 +168,65 @@ export class CanvasGrid implements ComponentFramework.StandardControl<IInputs, I
 	 * @param context The entire property bag available to control via Context Object; It contains values as set up by the customizer mapped to names defined in the manifest, as well as utility functions
 	 */
 	public updateView(context: ComponentFramework.Context<IInputs>): void {
-	const dataset = context.parameters.records;
-	const datasetChanged = context.updatedProperties.includes("dataset");
-	const resetPaging = datasetChanged && !dataset.loading && !dataset.paging.hasPreviousPage && this.currentPage !== 1;
+		const dataset = context.parameters.records;
+		const datasetChanged = context.updatedProperties.includes("dataset");
+		const resetPaging = datasetChanged && !dataset.loading && !dataset.paging.hasPreviousPage && this.currentPage !== 1;
 
-	if (context.updatedProperties.includes("fullscreen_close")) {
-		this.isFullScreen = false;
+		if (context.updatedProperties.includes("fullscreen_close")) {
+			this.isFullScreen = false;
+		}
+		if (context.updatedProperties.includes("fullscreen_open")) {
+			this.isFullScreen = true;
+		}
+
+		if (resetPaging) {
+			this.currentPage = 1;
+		}
+
+		if (resetPaging || datasetChanged || this.isTestHarness || !this.records) {
+			this.records = dataset.records;
+			this.sortedRecordsIds = dataset.sortedRecordIds;
+		}
+
+		const allocatedWidth = parseInt(context.mode.allocatedWidth as unknown as string);
+		const allocatedHeight = parseInt(context.mode.allocatedHeight as unknown as string);
+
+		if (this.filteredRecordCount !== this.sortedRecordsIds.length) {
+			this.filteredRecordCount = this.sortedRecordsIds.length;
+			this.notifyOutputChanged();
+		}
+
+		// Render the updated grid
+		this.root.render(
+			React.createElement(Grid, {
+				width: allocatedWidth,
+				height: allocatedHeight,
+				columns: dataset.columns,
+				records: this.records,
+				sortedRecordIds: this.sortedRecordsIds,
+				sorting: dataset.sorting,
+				filtering: dataset.filtering?.getFilter() ?? undefined,
+				resources: this.resources,
+				highlightValue: this.context.parameters.HighlightValue.raw,
+				highlightColor: this.context.parameters.HighlightColor.raw,
+
+				onSort: this.onSort,
+				onFilter: this.onFilter,
+				onNavigate: this.onNavigate,
+				itemsLoading: dataset.loading,
+				setSelectedRecords: this.setSelectedRecords,
+				onHideColumn: this.onHideColumn,
+				onPageSizeChange: this.onPageSizeChange,
+				defaultPageSize: this.defaultPageSize ?? 10,
+				hasNextPage: dataset.paging.hasNextPage,
+				hasPreviousPage: dataset.paging.hasPreviousPage,
+				currentPage: this.currentPage ?? 1,
+				isFullScreen: this.isFullScreen,
+				onFullScreen: this.onFullScreen,
+				onResetColumns: this.onResetColumns
+			})
+		);
 	}
-	if (context.updatedProperties.includes("fullscreen_open")) {
-		this.isFullScreen = true;
-	}
-
-	if (resetPaging) {
-		this.currentPage = 1;
-	}
-
-	if (resetPaging || datasetChanged || this.isTestHarness || !this.records) {
-		this.records = dataset.records;
-		this.sortedRecordsIds = dataset.sortedRecordIds;
-	}
-
-	const allocatedWidth = parseInt(context.mode.allocatedWidth as unknown as string);
-	const allocatedHeight = parseInt(context.mode.allocatedHeight as unknown as string);
-
-	if (this.filteredRecordCount !== this.sortedRecordsIds.length) {
-		this.filteredRecordCount = this.sortedRecordsIds.length;
-		this.notifyOutputChanged();
-	}
-
-	// Render the updated grid
-	this.root.render(
-		React.createElement(Grid, {
-			width: allocatedWidth,
-			height: allocatedHeight,
-			columns: dataset.columns,
-			records: this.records,
-			sortedRecordIds: this.sortedRecordsIds,
-			sorting: dataset.sorting,
-			filtering: dataset.filtering?.getFilter() ?? undefined,
-			resources: this.resources,
-			highlightValue: this.context.parameters.HighlightValue.raw,
-			highlightColor: this.context.parameters.HighlightColor.raw,
-			
-			onSort: this.onSort,
-			onFilter: this.onFilter,
-			onNavigate: this.onNavigate,
-			itemsLoading: dataset.loading,
-			setSelectedRecords: this.setSelectedRecords,
-			onHideColumn: this.onHideColumn,
-			onPageSizeChange: this.onPageSizeChange,
-			defaultPageSize: this.defaultPageSize ?? 10,
-			hasNextPage: dataset.paging.hasNextPage,
-			hasPreviousPage: dataset.paging.hasPreviousPage,
-			currentPage: this.currentPage ?? 1,
-			isFullScreen: this.isFullScreen,
-			onFullScreen: this.onFullScreen,
-		})
-	);
-}
 
 
 	/**
@@ -221,6 +244,6 @@ export class CanvasGrid implements ComponentFramework.StandardControl<IInputs, I
 	 * i.e. cancelling any pending remote calls, removing listeners, etc.
 	 */
 	public destroy(): void {
-		 this.root.unmount();
+		this.root.unmount();
 	}
 }
