@@ -51,7 +51,40 @@ export interface GridProps {
 }
 
 const getUniqueColumnValues = (records: Record<string, any>, columnKey: string): string[] => {
-  return Array.from(new Set(Object.values(records).map((r) => r?.getFormattedValue(columnKey)).filter(Boolean)));
+  // If no records, return empty array
+  if (!records || Object.keys(records).length === 0) {
+    return [];
+  }
+
+  const allValues = Object.values(records).map((r) => {
+    try {
+      // First try getFormattedValue
+      let value = r?.getFormattedValue(columnKey);
+      if (value !== null && value !== undefined && value !== '') {
+        return String(value);
+      }
+      
+      // If that doesn't work, try getValue
+      value = r?.getValue(columnKey);
+      if (value !== null && value !== undefined && value !== '') {
+        return String(value);
+      }
+      
+      // Try accessing raw data if available
+      if ((r as any).raw && (r as any).raw[columnKey] !== undefined) {
+        return String((r as any).raw[columnKey]);
+      }
+      
+      return null;
+    } catch (error) {
+      // If there's an error accessing the column, return null
+      return null;
+    }
+  }).filter((v): v is string => v !== null && v !== undefined && v !== '');
+  
+  // Return unique values, sorted
+  const uniqueValues = Array.from(new Set(allValues));
+  return uniqueValues.sort();
 };
 
 const onRenderDetailsHeader: IRenderFunction<IDetailsHeaderProps> = (props, defaultRender) => {
@@ -92,7 +125,8 @@ export const Grid = React.memo((props: GridProps) => {
     onHideColumn,
     onResetColumns,
     onFullScreen,
-    isFullScreen
+    isFullScreen,
+    onPageSizeChange
   } = props;
 
   // Local state for hidden columns (by name)
@@ -114,15 +148,45 @@ export const Grid = React.memo((props: GridProps) => {
   const [contextualMenuProps, setContextualMenuProps] = React.useState<IContextualMenuProps>();
   const [currentPage, setCurrentPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState<number>(10);
+  const [pageSizeInput, setPageSizeInput] = React.useState<string>("10");
   const [isComponentLoading, setIsLoading] = React.useState(false);
   const [containsFilters, setContainsFilters] = React.useState<Record<string, string[]>>({});
   const [equalsFilters, setEqualsFilters] = React.useState<Record<string, string[]>>({});
+
+  // Close contextual menu when records change significantly (data refresh)
+  // But only if the menu was open before the change
+  const previousRecordCount = React.useRef<number>(0);
+  React.useEffect(() => {
+    const currentRecordCount = Object.keys(records).length;
+    
+    // Only auto-close if:
+    // 1. We had minimal data before (< 5 records)
+    // 2. We now have substantial data (>= 5 records) 
+    // 3. A contextual menu is currently open
+    // 4. This represents a significant increase in data
+    if (previousRecordCount.current < 5 && 
+        currentRecordCount >= 5 && 
+        contextualMenuProps &&
+        currentRecordCount > previousRecordCount.current) {
+      setContextualMenuProps(undefined);
+    }
+    
+    previousRecordCount.current = currentRecordCount;
+  }, [records, contextualMenuProps]);
 
   const onContextualMenuDismissed = () => setContextualMenuProps(undefined);
 
   const getContextualMenuProps = React.useCallback((column: IColumn, ev: React.MouseEvent<HTMLElement>): IContextualMenuProps => {
     const colKey = column.key;
-    const uniqueValues = getUniqueColumnValues(records, colKey).sort();
+    const fieldName = column.fieldName || column.key;
+    
+    // Try multiple approaches to get unique values
+    const uniqueValues1 = getUniqueColumnValues(records, fieldName);
+    const uniqueValues2 = fieldName !== colKey ? getUniqueColumnValues(records, colKey) : [];
+    
+    // Combine results
+    const uniqueValues = [...uniqueValues1, ...uniqueValues2];
+    const finalUniqueValues = Array.from(new Set(uniqueValues)).sort();
 
     return {
       items: [
@@ -146,7 +210,7 @@ export const Grid = React.memo((props: GridProps) => {
         },
         {
           key: "filterContains",
-          name: "Filter by Contains",
+          name: containsFilters[colKey]?.length > 0 ? `Filter by Contains ✓` : "Filter by Contains",
           iconProps: { iconName: "Filter" },
           subMenuProps: {
             items: [
@@ -154,32 +218,67 @@ export const Grid = React.memo((props: GridProps) => {
                 key: "containsDropdown",
                 name: "Contains",
                 onRender: () => {
-                  const filterValue = (containsFilters[colKey] && containsFilters[colKey][0]) || "";
+                  const currentFilter = containsFilters[colKey]?.[0] || "";
+                  
                   return (
                     <div style={{ padding: 10, width: 260 }}>
-                      <label style={{ display: "block", marginBottom: 6 }}>{`Filter "${column.name}" contains`}</label>
+                      <label style={{ display: "block", marginBottom: 6 }}>
+                        {`Filter "${column.name}" contains`}
+                        {currentFilter && <span style={{ color: '#0078d4', marginLeft: 5 }}>({currentFilter})</span>}
+                      </label>
                       <input
+                        key={`${colKey}-${currentFilter}`}
                         type="text"
-                        // value={containsFilters[colKey]?.[0] || ''}
+                        defaultValue={currentFilter}
                         onChange={(e) => {
                           e.stopPropagation();
                           const val = e.target.value;
+                          
+                          // Update local state immediately
                           setContainsFilters(prev => {
                             const updated = val ? [val] : [];
-                            onFilter(colKey, "contains", updated);
+                            
+                            // Also notify parent component (but don't depend on it)
+                            try {
+                              onFilter(colKey, "contains", updated);
+                            } catch (error) {
+                              // Parent notification failed, but local filtering will still work
+                            }
+                            
                             return { ...prev, [colKey]: updated };
                           });
                         }}
+                        onKeyDown={(e) => {
+                          // Prevent menu from closing on certain keys
+                          if (e.key === 'Escape') {
+                            setContextualMenuProps(undefined);
+                          }
+                          e.stopPropagation();
+                        }}
                         style={{ width: "90%", marginBottom: 8 }}
                         placeholder="Type to filter..."
+                        autoFocus
                       />
                       <DefaultButton
                         text="Clear"
-                        onClick={() => {
+                        onClick={(e) => {
+                          // Clear the input field directly
+                          const inputElement = (e.target as HTMLElement).closest('div')?.querySelector('input');
+                          if (inputElement) {
+                            inputElement.value = '';
+                          }
+                          
                           setContainsFilters(prev => {
                             const next = { ...prev };
                             delete next[colKey];
-                            onFilter(colKey, null, []);
+                            
+                            // Also notify parent component
+                            try {
+                              onFilter(colKey, null, []);
+                            } catch (error) {
+                              // Parent notification failed, but local filtering will still work
+                            }
+                            
                             return next;
                           });
                           setContextualMenuProps(undefined);
@@ -195,8 +294,8 @@ export const Grid = React.memo((props: GridProps) => {
         },
         {
           key: "filterEquals",
-          name: "Filter by Equals",
-          iconProps: { iconName: "Equals" },
+          name: equalsFilters[colKey]?.length > 0 ? `Filter by Equals ✓` : "Filter by Equals",
+          iconProps: { iconName: "Filter" }, // Changed from "Equals" to "Filter" since Equals icon isn't registered
           subMenuProps: {
             items: [
               {
@@ -204,7 +303,30 @@ export const Grid = React.memo((props: GridProps) => {
                 name: "Equals",
                 onRender: () => {
                   const selected = equalsFilters[colKey] || [];
-                  const allSelected = uniqueValues.length > 0 && selected.length === uniqueValues.length;
+                  
+                  // Check if data is still loading by looking at record count and available columns
+                  const hasMinimalData = Object.keys(records).length < 5; // Threshold for "still loading"
+                  const currentUniqueValues = finalUniqueValues.length > 0 ? finalUniqueValues : [];
+                  
+                  // If we have no values but data might still be loading, show loading message
+                  if (currentUniqueValues.length === 0 && hasMinimalData) {
+                    return (
+                      <div style={{ padding: 10, width: 260 }}>
+                        <div>Loading data... Please try again in a moment.</div>
+                      </div>
+                    );
+                  }
+                  
+                  // If we have sufficient data but still no values, show no values message
+                  if (currentUniqueValues.length === 0) {
+                    return (
+                      <div style={{ padding: 10, width: 260 }}>
+                        <div>No values found for this column</div>
+                      </div>
+                    );
+                  }
+
+                  const allSelected = currentUniqueValues.length > 0 && selected.length === currentUniqueValues.length;
 
                   const options = [
                     {
@@ -212,40 +334,64 @@ export const Grid = React.memo((props: GridProps) => {
                       text: allSelected ? "Unselect All" : "Select All",
                       selected: allSelected,
                     },
-                    ...uniqueValues.map((v) => ({
+                    ...currentUniqueValues.map((v) => ({
                       key: v,
                       text: v,
-                      selected: selected.includes(v),
+                      selected: selected.includes(v)
                     })),
                   ];
 
                   return (
                     <div style={{ padding: 10, width: 260 }} onMouseDown={e => e.stopPropagation()}>
                       <ComboBox
+                        key={`${colKey}-${selected.sort().join(',')}`}
+                        placeholder="Select values"
                         label={`Filter "${column.name}" equals`}
                         multiSelect
                         selectedKey={undefined}
                         options={options}
+                        styles={{
+                          container: { width: 240 },
+                          root: { width: 240 }
+                        }}
                         onChange={(_, option) => {
                           if (!option) return;
                           setEqualsFilters(prev => {
                             const current = prev[colKey] || [];
-
                             let updated: string[] = [];
 
                             if (option.key === "__selectAll__") {
-                              updated = selected.length === uniqueValues.length ? [] : [...uniqueValues];
-                              setContextualMenuProps(undefined);
+                              updated = current.length === currentUniqueValues.length ? [] : [...currentUniqueValues];
+                              
+                              // Close the context menu after select all
+                              setTimeout(() => {
+                                setContextualMenuProps(undefined);
+                              }, 100);
                             } else {
-                              updated = option.selected
-                                ? [...current, option.key as string]
-                                : current.filter((k) => k !== option.key);
+                              // Use option.selected to determine action
+                              if (option.selected) {
+                                updated = current.includes(option.key as string)
+                                  ? current
+                                  : [...current, option.key as string];
+                              } else {
+                                updated = current.filter((k) => k !== option.key);
+                              }
                             }
 
                             onFilter(colKey, "equals", updated);
                             return { ...prev, [colKey]: updated };
                           });
                         }}
+                        useComboBoxAsMenuWidth={true}
+                        allowFreeform={false}
+                        autoComplete="on"
+                        calloutProps={{
+                          calloutMaxHeight: 300,
+                          directionalHint: DirectionalHint.rightTopEdge,
+                          isBeakVisible: true,
+                          gapSpace: 10
+                        }}
+                        onMouseDown={e => e.stopPropagation()}
                       />
                       <DefaultButton
                         text="Clear"
@@ -283,7 +429,7 @@ export const Grid = React.memo((props: GridProps) => {
       isBeakVisible: true,
       onDismiss: onContextualMenuDismissed,
     };
-  }, [containsFilters, equalsFilters]);
+  }, [containsFilters, equalsFilters, records, columns]); // Added records and columns dependencies
 
   const onColumnContextMenu = React.useCallback((column?: IColumn, ev?: React.MouseEvent<HTMLElement>) => {
     if (column && ev) setContextualMenuProps(getContextualMenuProps(column, ev));
@@ -295,37 +441,77 @@ export const Grid = React.memo((props: GridProps) => {
 
   const items = React.useMemo(() => {
     setIsLoading(false);
-    return sortedRecordIds.map((id) => records[id]).filter(Boolean);
+    const itemsArray = sortedRecordIds.map((id) => records[id]).filter(Boolean);
+    return itemsArray;
   }, [sortedRecordIds, records]);
 
   const filteredItems = React.useMemo(() => {
-    console.log("Filtering with:", { containsFilters, equalsFilters });
-    return items.filter(item => {
-      const containsMatch = Object.entries(containsFilters).every(([col, vals]) => {
-        if (vals.length === 0) return true;
-        const itemValue = item.getFormattedValue(col)?.toLowerCase() || "";
-        const matches = vals.some(val => itemValue.includes(val.toLowerCase()));
-        console.log(`Contains filter for ${col}: item="${itemValue}", filters=[${vals.join(',')}], matches=${matches}`);
-        return matches;
-      });
+    if (items.length === 0) {
+      return [];
+    }
 
-      const equalsMatch = Object.entries(equalsFilters).every(([col, vals]) => {
-        if (vals.length === 0) return true;
-        const itemValue = item.getFormattedValue(col) || "";
-        const matches = vals.some(val => itemValue === val);
-        console.log(`Equals filter for ${col}: item="${itemValue}", filters=[${vals.join(',')}], matches=${matches}`);
-        return matches;
-      });
+    const filtered = items.filter((item, index) => {
+      try {
+        // Contains filter logic
+        const containsMatch = Object.entries(containsFilters).every(([col, vals]) => {
+          if (!vals || vals.length === 0) return true;
+          
+          let itemValue = "";
+          try {
+            itemValue = (item.getFormattedValue(col) || "").toLowerCase();
+          } catch (error) {
+            try {
+              itemValue = (item.getValue && item.getValue(col) || "").toString().toLowerCase();
+            } catch (fallbackError) {
+              return false;
+            }
+          }
+          
+          const matches = vals.some(val => {
+            if (!val) return true;
+            return itemValue.includes(val.toLowerCase());
+          });
+          
+          return matches;
+        });
 
-      return containsMatch && equalsMatch;
+        // Equals filter logic
+        const equalsMatch = Object.entries(equalsFilters).every(([col, vals]) => {
+          if (!vals || vals.length === 0) return true;
+          
+          let itemValue = "";
+          try {
+            itemValue = item.getFormattedValue(col) || "";
+          } catch (error) {
+            try {
+              itemValue = (item.getValue && item.getValue(col) || "").toString();
+            } catch (fallbackError) {
+              return false;
+            }
+          }
+          
+          const matches = vals.some(val => itemValue === val);
+          return matches;
+        });
+
+        return containsMatch && equalsMatch;
+      } catch (error) {
+        return false;
+      }
     });
+
+    return filtered;
   }, [items, containsFilters, equalsFilters]);
 
   const totalPages = Math.ceil(filteredItems.length / pageSize);
 
   React.useEffect(() => {
-    if (currentPage > totalPages) setCurrentPage(totalPages || 1);
-  }, [filteredItems, totalPages]);
+    if (currentPage > totalPages && totalPages > 0) {
+      setCurrentPage(totalPages);
+    } else if (totalPages === 0 && currentPage !== 1) {
+      setCurrentPage(1);
+    }
+  }, [filteredItems.length, pageSize, currentPage, totalPages]);
 
   const pagedItems = React.useMemo(() => {
     return filteredItems.slice((currentPage - 1) * pageSize, currentPage * pageSize);
@@ -363,8 +549,6 @@ export const Grid = React.memo((props: GridProps) => {
     return <DetailsRow {...props} styles={customStyles} />;
   };
 
-  console.log("Full Screen Mode:", isFullScreen);
-
   return (
     <Stack verticalFill grow style={{ width, height }}>
       <Stack.Item>
@@ -374,7 +558,22 @@ export const Grid = React.memo((props: GridProps) => {
             <PrimaryButton
               text={resources.getString("Label_ResetColumns")}
               iconProps={{ iconName: "RevToggleKey" }}
-              onClick={onResetColumns}
+              onClick={() => {
+                // Reset all local state
+                setHiddenColumns([]);
+                setContainsFilters({});
+                setEqualsFilters({});
+                setCurrentPage(1);
+                setPageSize(10);
+                setPageSizeInput("10");
+                
+                // Clear all filters by calling onFilter with null for each filtered column
+                Object.keys(containsFilters).forEach(col => onFilter(col, null, []));
+                Object.keys(equalsFilters).forEach(col => onFilter(col, null, []));
+                
+                // Call parent reset function (for sorting and other external state)
+                onResetColumns();
+              }}
             />
           </Stack>
         </Stack>
@@ -404,13 +603,38 @@ export const Grid = React.memo((props: GridProps) => {
             type="number"
             min={1}
             max={1000}
-            value={pageSize}
+            value={pageSizeInput}
             onChange={e => {
-              let val = Number(e.target.value);
-              if (isNaN(val) || val < 1) val = 1;
-              if (val > 1000) val = 1000;
-              setPageSize(val);
-              setCurrentPage(1);
+              const inputValue = e.target.value;
+              setPageSizeInput(inputValue);
+              
+              // Only update pageSize if it's a valid number
+              const val = Number(inputValue);
+              if (!isNaN(val) && val >= 1 && val <= 1000) {
+                setPageSize(val);
+                setCurrentPage(1);
+                onPageSizeChange(val);
+              }
+            }}
+            onBlur={e => {
+              // On blur, ensure we have a valid value
+              const val = Number(e.target.value);
+              if (isNaN(val) || val < 1) {
+                setPageSizeInput("10");
+                setPageSize(10);
+                setCurrentPage(1);
+                onPageSizeChange(10);
+              } else if (val > 1000) {
+                setPageSizeInput("1000");
+                setPageSize(1000);
+                setCurrentPage(1);
+                onPageSizeChange(1000);
+              }
+            }}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                e.currentTarget.blur(); // Trigger validation
+              }
             }}
             style={{ width: 80, marginRight: 8 }}
           />
